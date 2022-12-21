@@ -1,9 +1,12 @@
 use std::cmp::Ordering;
+use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use lazy_static::lazy_static;
 use regex::{Regex, Match};
 
 lazy_static! {
     static ref VERSION_PATTERN: Regex = Regex::new(r#"(?xi)
+    ^\s*
     v?
     (?:
         (?:(?P<epoch>[0-9]+)!)?                           # epoch
@@ -32,31 +35,32 @@ lazy_static! {
         )?
     )
     (?:\+(?P<local>[a-z0-9]+(?:[-_\.][a-z0-9]+)*))?       # local version
+    \s*$
 "#).unwrap();
     static ref LOCAL_VERSION_SEPARATOR: Regex = Regex::new(r#"[\._-]"#).unwrap();
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Hash, Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum PrePostDevType<'v> {
     NegativeInf,
     Tuple(&'v str, u64),
     PositiveInf,
 }
 
-#[derive(Debug, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Hash, Debug, Ord, PartialOrd, Eq, PartialEq)]
 pub enum LocalTypePart {
     AlphanumVersion(String),
     NumericVersion(u64),
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Hash, Debug, Ord, PartialOrd, Eq, PartialEq)]
 enum LocalType<'v> {
     NegativeInf,
     ConcreteVersion(&'v [LocalTypePart]),
 }
 
-#[derive(Ord, PartialOrd, Eq, PartialEq)]
-struct VersionCmpKey<'v> {
+#[derive(Hash, Debug, Ord, PartialOrd, Eq, PartialEq)]
+pub struct VersionCmpKey<'v> {
     epoch: u64,
     release: &'v [u64],
     pre: PrePostDevType<'v>,
@@ -101,7 +105,7 @@ impl<'v> From<&'v Version> for VersionCmpKey<'v> {
             PrePostDevType::NegativeInf
         };
 
-        let dev = if let Some((s, u)) = &value.post {
+        let dev = if let Some((s, u)) = &value.dev {
             PrePostDevType::Tuple(s.as_str(), *u)
         } else {
             PrePostDevType::PositiveInf
@@ -147,6 +151,43 @@ impl Ord for Version {
     }
 }
 
+impl Hash for Version {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let cmp_key: VersionCmpKey = self.into();
+        cmp_key.hash(state);
+    }
+}
+
+impl Display for Version {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut parts = vec![];
+        if self.epoch != 0 {
+            parts.push(format!("{}!", self.epoch));
+        }
+        let release_str_vec: Vec<_> = self.release.iter().map(|x| x.to_string()).collect();
+        parts.push(release_str_vec.join("."));
+
+        if let Some((s, u)) = &self.pre {
+            parts.push(format!("{}{}", s, u));
+        }
+
+        if let Some((_, u)) = &self.post {
+            parts.push(format!(".post{}", u));
+        }
+
+        if let Some((_, u)) = &self.dev {
+            parts.push(format!(".dev{}", u))
+        }
+
+        if let Some(repr) = self.local_repr() {
+            parts.push(format!("+{}", repr))
+        }
+
+
+        f.write_str(parts.join("").as_str())
+    }
+}
+
 fn parse_letter_version<'a>(letter: Option<Match<'a>>, number: Option<Match<'a>>) -> Option<(String, u64)> {
     if let Some(letter) = letter {
         let letter = letter.as_str().to_ascii_lowercase();
@@ -178,7 +219,7 @@ fn parse_local_version(local: Option<Match>) -> Option<Vec<LocalTypePart>> {
             if let Ok(i) = part.parse::<u64>() {
                 LocalTypePart::NumericVersion(i)
             } else {
-                LocalTypePart::AlphanumVersion(part.to_string())
+                LocalTypePart::AlphanumVersion(part.to_lowercase().to_string())
             }
         }).collect();
         Some(ret)
@@ -205,6 +246,25 @@ impl Version {
             dev,
             local
         })
+    }
+
+    pub fn local_repr(&self) -> Option<String> {
+        if let Some(parts) = &self.local {
+            let mut v = Vec::with_capacity(parts.len());
+            for x in parts {
+                match x {
+                    LocalTypePart::AlphanumVersion(s) => v.push(s.to_string()),
+                    LocalTypePart::NumericVersion(u) => v.push(u.to_string())
+                }
+            }
+            Some(v.join("."))
+        } else {
+            None
+        }
+    }
+
+    pub fn key(&self) -> VersionCmpKey {
+        self.into()
     }
 }
 
