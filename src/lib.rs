@@ -248,6 +248,17 @@ impl Version {
         })
     }
 
+    pub fn base_version(self) -> Self {
+        Self {
+            epoch: self.epoch,
+            release: self.release,
+            pre: None,
+            post: None,
+            dev: None,
+            local: None
+        }
+    }
+
     pub fn local_repr(&self) -> Option<String> {
         if let Some(parts) = &self.local {
             let mut v = Vec::with_capacity(parts.len());
